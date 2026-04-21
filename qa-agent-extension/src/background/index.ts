@@ -79,9 +79,20 @@ async function fetchPageText(url: string, timeoutMs = 30_000): Promise<string> {
         // Wait for JS-rendered content and auto-play to initialise (5s)
         setTimeout(async () => {
           try {
+            // ── Step 1: inject axe-core into the reference tab ───────────
+            // axe.min.js lives in dist/ and is listed in web_accessible_resources.
+            // We swallow errors so the rest of the extraction still runs if axe fails.
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: refTabId },
+                files: ['axe.min.js'],
+              })
+            } catch { /* axe unavailable — extraction continues without it */ }
+
+            // ── Step 2: main extraction (async so we can await axe.run) ──
             const results = await chrome.scripting.executeScript({
               target: { tabId: refTabId },
-              func: () => {
+              func: async () => {
                 const title = document.title ?? ''
 
                 // ── Identify the main content area (exclude page chrome) ──
@@ -439,6 +450,80 @@ async function fetchPageText(url: string, timeoutMs = 30_000): Promise<string> {
                   `  Test 4.F DNA? ${focusCount === 0 ? 'YES — no keyboard-focusable elements' : 'NO — ' + focusCount + ' focusable element(s) exist'}`,
                 ].join('\n')
 
+                // ── axe-core automated accessibility scan ────────────────
+                let axeSection = '=== AXE-CORE: not available (run npm install axe-core) ==='
+                if ((window as any).axe) {
+                  try {
+                    const axeResults = await (window as any).axe.run(mainContent, {
+                      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'section508'] },
+                      resultTypes: ['violations', 'incomplete'],
+                    })
+
+                    // Map each axe rule to the Trusted Tester test it covers
+                    const TT_MAP: Record<string, string> = {
+                      'audio-caption':           '2.A (1.4.2)',
+                      'bypass':                  '4.G (2.4.1)',
+                      'focus-trap':              '4.C (2.1.2)',
+                      'focusable-content':       '4.A (2.1.1)',
+                      'frame-focusable-content': '4.A (2.1.1)',
+                      'focus-order-semantics':   '4.F (2.4.3)',
+                      'tabindex':                '4.F (2.4.3)',
+                      'scrollable-region-focusable': '4.A (2.1.1)',
+                      'keyboard':                '4.A (2.1.1)',
+                      'focus-visible':           '4.D (2.4.7)',
+                      'label':                   '5.C (1.3.1)',
+                      'label-content-name-mismatch': '5.C (1.3.1)',
+                      'link-name':               '6.A (2.4.4)',
+                      'link-in-text-block':      '6.A (2.4.4)',
+                      'image-alt':               '7.A (1.1.1)',
+                      'image-redundant-alt':     '7.A (1.1.1)',
+                      'input-image-alt':         '7.A (1.1.1)',
+                      'role-img-alt':            '7.A (1.1.1)',
+                      'blink':                   '2.B (2.2.2)',
+                      'marquee':                 '2.B (2.2.2)',
+                      'aria-live-region-content': '2.D (4.1.2)',
+                    }
+
+                    const fmtViolation = (v: any): string => {
+                      const tt = TT_MAP[v.id] ? ` → TrustedTester ${TT_MAP[v.id]}` : ''
+                      const nodes = (v.nodes as any[]).slice(0, 3)
+                        .map((n: any) => `      • ${(n.html as string).substring(0, 120)}`)
+                        .join('\n')
+                      return (
+                        `AXE_VIOLATION [${v.impact?.toUpperCase() ?? 'UNKNOWN'}]${tt}\n` +
+                        `  Rule: ${v.id} — ${v.help}\n` +
+                        `  WCAG: ${(v.tags as string[]).filter((t: string) => t.startsWith('wcag')).join(', ')}\n` +
+                        `  Instances (${v.nodes.length}):\n${nodes}`
+                      )
+                    }
+
+                    const fmtIncomplete = (v: any): string => {
+                      const tt = TT_MAP[v.id] ? ` → TrustedTester ${TT_MAP[v.id]}` : ''
+                      return (
+                        `AXE_NEEDS_REVIEW [${v.impact?.toUpperCase() ?? '?'}]${tt}\n` +
+                        `  Rule: ${v.id} — ${v.help} (${v.nodes.length} instance(s))`
+                      )
+                    }
+
+                    const violations  = (axeResults.violations  as any[]).map(fmtViolation)
+                    const incomplete  = (axeResults.incomplete   as any[]).map(fmtIncomplete)
+                    const passCount   = (axeResults.passes       as any[]).length
+
+                    if (violations.length === 0 && incomplete.length === 0) {
+                      axeSection = `=== AXE-CORE: NO VIOLATIONS (${passCount} rules passed) ===\n` +
+                        `All tested WCAG 2.x / Section 508 rules passed automated checks.`
+                    } else {
+                      axeSection =
+                        `=== AXE-CORE ACCESSIBILITY SCAN ` +
+                        `(${violations.length} violations · ${incomplete.length} needs-review · ${passCount} passed) ===\n` +
+                        `NOTE: Use violations to confirm FAIL verdicts; use needs-review as supporting evidence.\n\n` +
+                        [...violations, ...incomplete.slice(0, 8)].join('\n\n')
+                    }
+                  } catch (axeErr) {
+                    axeSection = `=== AXE-CORE ERROR: ${axeErr} ===`
+                  }
+                }
+
                 return [
                   `PAGE TITLE: ${title}`,
                   `PAGE_TYPE: ${isMoodlePage ? 'MOODLE (scoped to main content)' : 'EXAM REFERENCE PAGE (full body scanned)'}`,
@@ -451,6 +536,7 @@ async function fetchPageText(url: string, timeoutMs = 30_000): Promise<string> {
                   autoSection,
                   ctrlSection,
                   keyboardSection,
+                  axeSection,
                   iframeContent ? `=== IFRAME CONTENT ===\n${iframeContent}` : '',
                 ].filter(Boolean).join('\n\n')
               },

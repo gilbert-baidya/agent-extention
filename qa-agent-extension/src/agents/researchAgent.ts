@@ -278,7 +278,31 @@ KEYBOARD-SPECIFIC RULES (Tests 4.A–4.G):
 If BEHAVIOUR_KEYBOARD shows N > 0 focusable elements, then for tests 4.A–4.F:
   → DNA is WRONG. The page HAS interactive content.
   → Determine PASS or FAIL based on the specific test criteria above.
-Only use DNA when the focusable count is genuinely 0 AND the test's specific DNA condition is met.`
+Only use DNA when the focusable count is genuinely 0 AND the test's specific DNA condition is met.
+
+══ AXE-CORE RESULTS — HOW TO USE THEM ══
+The DOM data may include an AXE-CORE section produced by the axe automated accessibility engine.
+These are objective, rule-based findings. Use them as follows:
+
+AXE_VIOLATION entries:
+  - Strong evidence of a FAIL verdict for the mapped Trusted Tester test.
+  - Each violation shows "→ TrustedTester X.Y (WCAG)". Use this mapping directly.
+  - A violation with impact=CRITICAL or SERIOUS is very likely a Trusted Tester FAIL.
+  - A violation with impact=MODERATE or MINOR still counts — confirm with the test's PASS conditions.
+
+AXE_NEEDS_REVIEW entries:
+  - The automated tool found a POTENTIAL issue but cannot be certain without human review.
+  - Use as supporting evidence only — not definitive proof of FAIL.
+  - If the Trusted Tester test's specific condition matches the needs-review description, lean toward FAIL.
+
+"AXE-CORE: NO VIOLATIONS":
+  - All tested automated rules passed. This supports a PASS verdict.
+  - Note: axe cannot test everything — keyboard traps, focus order, and timing require manual testing.
+  - If axe passes AND DOM evidence looks clean, PASS is the right verdict.
+
+IMPORTANT: axe results SUPPLEMENT the DOM evidence — they do not replace the Trusted Tester methodology.
+If axe shows a violation but the DNA condition is met (no relevant content on page), DNA still applies.
+If axe passes but DOM evidence clearly shows a violation, still report FAIL.`
 
 const MAX_PAGE_CHARS = 30_000
 
